@@ -1,4 +1,4 @@
-import csv
+import New_CSVs
 from lib2to3.pgen2 import driver
 import os
 import openpyxl
@@ -22,12 +22,12 @@ HEADER = ["Team", "Match_Num", "Auto_Cross", "Auto_Outter", "Auto_Bottom", "Tele
 team_points = {} # {"team number": [points]}
 team_stats = {} # {"team number": [[round stat]]}
 
-wb = Workbook() 
+wb = Workbook()
 
 def read_csv(path):
-    """Read the csv return the [team number, total point]"""
+    """Read the New_CSVs return the [team number, total point]"""
     file = open(path)
-    reader = csv.reader(file)
+    reader = New_CSVs.reader(file)
 
     # header = next(reader)
     # header.append("Points Contrib")
@@ -51,14 +51,14 @@ def read_csv(path):
 
 def main():
 
-    if os.path.exists("main.xlsx"):
-        os.remove("main.xlsx")
+    if os.path.exists("Excel_Sheets/Rankings.xlsx"):
+        os.remove("Excel_Sheets/Rankings.xlsx")
 
-    files = os.listdir("csv") # input folder
+    files = os.listdir("New_CSVs") # input folder
     for filename in files:
-        read_csv("csv/" + filename)    
+        read_csv("New_CSVs/" + filename)
     write_excel(team_stats)
-    
+
 
 def write_excel(data: dict):
     """
@@ -68,7 +68,7 @@ def write_excel(data: dict):
     col = 0
     m_row = 2
     master = wb.worksheets[0]
-    
+
     master.cell(row=1, column=1).value = "Team #"
     master.cell(row=1, column=2).value = "Average"
 
@@ -77,7 +77,7 @@ def write_excel(data: dict):
     for team, stats in data.items():
         scores = []
         ws = wb.create_sheet("Team " + team)
-        
+
         for d in stats:
             for a in d:
                 # print(a)
@@ -87,15 +87,15 @@ def write_excel(data: dict):
                 scores.append(int(d[col-1])) # added points to the scores array
             row += 1
             col = 0
-        
-        
+
+
         # ws.cell(row=row+1, column=12).value = "Average"
         ws.cell(row=row+1, column=13).value = sum(scores) / len(scores)
         ws.cell(row=row+1, column=1).value = "Average"
         col = 3
         for avg in generate_average(team_stats[team]):
             ws.cell(row=row+1, column=col).value = avg # fix alignment in excel
-            col += 1    
+            col += 1
 
         # write to the master sheet
         team_score[team] = sum(scores) / len(scores)
@@ -110,8 +110,8 @@ def write_excel(data: dict):
         master.cell(row=m_row, column=2).value = score
         m_row += 1
 
-    wb.save("main.xlsx")
-    
+    wb.save("Rankings.xlsx")
+
 def generate_average(stats):
     """
         stats: [[stat], [stat]]
@@ -160,8 +160,8 @@ def sort_dict(dict1: dict):
         for k in dict1.keys():
             if dict1[k] == i:
                 sorted_dict[k] = dict1[k]
-                break    
-    
+                break
+
     return sorted_dict
 
 if __name__ == "__main__":
