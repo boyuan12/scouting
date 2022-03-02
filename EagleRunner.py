@@ -1,168 +1,101 @@
-import New_CSVs
-from lib2to3.pgen2 import driver
-import os
+from string import ascii_uppercase
+
+import numpy as np
 import openpyxl
-from openpyxl import Workbook
+import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.formatting.rule import CellIsRule
+from openpyxl.styles import PatternFill
+from setuptools import glob
 
-# indexes in row
-TEAM = 0
-MATCH_NUM = 1
-TARMAC = 2
-AUTO_OUTTER = 3
-AUTO_BOTTOM = 4
-TELEOP_OUTTER = 5
-TELEOP_BOTTOM = 6
-LEVEL = 7
-DRIVER_PERF = 8
-AUTO_PERF = 9
+# Headers for RAW_CSV files
+HEADERS = ["Team", "Match_Num", "Auto_Cross", "Auto_Outer",
+           "Auto_Bottom", "Tele_Outer", "Tele_Bottom", "Level",
+           "Driver_Performance", "Auto_Perf", "Name", "Comments"]
 
-CLIMB_POINTS = [0, 4, 6, 10, 15]
-HEADER = ["Team", "Match_Num", "Auto_Cross", "Auto_Outter", "Auto_Bottom", "Tele_Outter", "Tele_Bottom", "Level", "Drvr_Perf", "Auto_Perf", "Name", "Comments", "Point_Contrib"]
+# Excel fill colors using RGB values
+darkRedFill = PatternFill(start_color='FF3333', end_color='FF3333', fill_type='solid')
+redFill = PatternFill(start_color='FF6666', end_color='FF6666', fill_type='solid')
+orangeFill = PatternFill(start_color='FFB266', end_color='FFB266', fill_type='solid')
+yellowFill = PatternFill(start_color='FFFF66', end_color='FFFF66', fill_type='solid')
+limeFill = PatternFill(start_color='B2FF66', end_color='B2FF66', fill_type='solid')
+greenFill = PatternFill(start_color='66FF66', end_color='66FF66', fill_type='solid')
 
-team_points = {} # {"team number": [points]}
-team_stats = {} # {"team number": [[round stat]]}
 
-wb = Workbook()
+# Takes in a row from the DataFrame and calculates the total points using numpy
+def total_points(pandaRow):
+    CLIMB_POINTS = [0, 4, 6, 10, 15]
+    Points = [2, 4, 2, 2, 1, CLIMB_POINTS[pandaRow.iloc[0][7]]]
+    row = [col for col in pandaRow.iloc[0][2:8]]
+    pandaRow["Total Points"] = sum(np.multiply(Points, row))
+    return pandaRow
 
-def read_csv(path):
-    """Read the New_CSVs return the [team number, total point]"""
-    file = open(path)
-    reader = New_CSVs.reader(file)
 
-    # header = next(reader)
-    # header.append("Points Contrib")
-    total_points = 0
+# Reads and concatenates RAW CSV files
+def CSV_Reader():
+    return pd.concat([total_points(pd.read_csv(file, names=HEADERS)) for file in glob.glob('New_CSVs/*.csv')],
+                     ignore_index=True)
 
-    for row in reader:
-        total_points += int(row[TARMAC]) * 2
-        total_points += int(row[AUTO_OUTTER]) * 4
-        total_points += int(row[AUTO_BOTTOM]) * 2
-        total_points += int(row[TELEOP_BOTTOM]) * 2
-        total_points += int(row[TELEOP_BOTTOM]) * 1
-        total_points += CLIMB_POINTS[int(row[LEVEL])]
 
-        row.append(total_points)
-        if row[TEAM] not in team_stats.keys():
-            team_stats[row[TEAM]] = [HEADER, row]
-        else:
-            team_stats[row[TEAM]].append(row)
+combinedData = CSV_Reader()
+teams = combinedData.groupby("Team")
 
-        # return [row[TEAM], total_points]
+score_avg = teams[combinedData.columns[2:8]].mean()
+total_avg = teams[combinedData.columns[12]].mean()
+
+
+def teams_writer():
+    teamData = dict(tuple(teams))
+    with pd.ExcelWriter('Excel_Sheets/Teams.xlsx') as writer:
+        for team in teamData.keys():
+            team_average = pd.DataFrame(score_avg.loc[team]).swapaxes(0, 1)
+            team_average["Total Points"] = [pd.DataFrame(total_avg).loc[team].get(key="Total Points")]
+            teamData[team] = pd.concat([teamData[team], team_average])
+            teamData[team].to_excel(writer, sheet_name="Team" + str(team), index=False)
+
+
+def rankings_writer():
+    total_avg.rename("Average Points", inplace=True)
+    rankings = pd.concat([total_avg, score_avg], axis=1)
+    rankings.sort_values(ascending=False, inplace=True, by="Average Points")
+
+    writer = pd.ExcelWriter("Excel_Sheets/Teams.xlsx", engine='openpyxl')
+    writer.book = load_workbook("Excel_Sheets/Teams.xlsx")
+    rankings.to_excel(writer, sheet_name="Rankings")
+    writer.save()
+
+    workbook = openpyxl.load_workbook("Excel_Sheets/Teams.xlsx")
+    ws = workbook["Rankings"]
+    for column in ascii_uppercase[1:8]:
+        column_mean = rankings[ws[column+'1'].value].mean()
+        column_deviation = rankings[ws[column+'1'].value].std()
+        rows = len(rankings.index) + 1
+        ws.conditional_formatting.add("{L}2:{L}{rows}".format(L=column, rows=rows),
+                                      CellIsRule(operator='lessThanOrEqual', formula=[column_mean - (3 * column_deviation)],
+                                                 stopIfTrue=True, fill=darkRedFill))
+        ws.conditional_formatting.add("{L}2:{L}{rows}".format(L=column, rows=rows),
+                                      CellIsRule(operator='between', formula=[column_mean - (2 * column_deviation), column_mean - column_deviation],
+                                                 stopIfTrue=True, fill=redFill))
+        ws.conditional_formatting.add("{L}2:{L}{rows}".format(L=column, rows=rows),
+                                      CellIsRule(operator='between', formula=[column_mean - column_deviation, column_mean],
+                                                 stopIfTrue=True, fill=orangeFill))
+        ws.conditional_formatting.add("{L}2:{L}{rows}".format(L=column, rows=rows),
+                                      CellIsRule(operator='between', formula=[column_mean, column_mean + column_deviation],
+                                                 stopIfTrue=True, fill=yellowFill))
+        ws.conditional_formatting.add("{L}2:{L}{rows}".format(L=column, rows=rows),
+                                      CellIsRule(operator='between', formula=[column_mean + column_deviation, column_mean + (2 * column_deviation)],
+                                                 stopIfTrue=True, fill=limeFill))
+        ws.conditional_formatting.add("{L}2:{L}{rows}".format(L=column, rows=rows),
+                                      CellIsRule(operator='greaterThanOrEqual', formula=[column_mean + (2 * column_deviation)],
+                                                 stopIfTrue=True, fill=greenFill))
+
+    workbook.save("Excel_Sheets/Teams.xlsx")
+
 
 def main():
-
-    if os.path.exists("Excel_Sheets/Rankings.xlsx"):
-        os.remove("Excel_Sheets/Rankings.xlsx")
-
-    files = os.listdir("New_CSVs") # input folder
-    for filename in files:
-        read_csv("New_CSVs/" + filename)
-    write_excel(team_stats)
+    teams_writer()
+    rankings_writer()
 
 
-def write_excel(data: dict):
-    """
-        input: {team num: [[round 1 stat, ], [round 2 stat], ... ], team num: [,,,,,]]
-    """
-    row = 0
-    col = 0
-    m_row = 2
-    master = wb.worksheets[0]
-
-    master.cell(row=1, column=1).value = "Team #"
-    master.cell(row=1, column=2).value = "Average"
-
-    team_score = {}
-
-    for team, stats in data.items():
-        scores = []
-        ws = wb.create_sheet("Team " + team)
-
-        for d in stats:
-            for a in d:
-                # print(a)
-                ws.cell(row=row+1, column=col+1).value = a
-                col += 1
-            if d[col-1] != "Point_Contrib":
-                scores.append(int(d[col-1])) # added points to the scores array
-            row += 1
-            col = 0
-
-
-        # ws.cell(row=row+1, column=12).value = "Average"
-        ws.cell(row=row+1, column=13).value = sum(scores) / len(scores)
-        ws.cell(row=row+1, column=1).value = "Average"
-        col = 3
-        for avg in generate_average(team_stats[team]):
-            ws.cell(row=row+1, column=col).value = avg # fix alignment in excel
-            col += 1
-
-        # write to the master sheet
-        team_score[team] = sum(scores) / len(scores)
-
-        row = 0
-        col = 0
-
-    team_score = sort_dict(team_score)
-    print(team_score)
-    for team, score in team_score.items():
-        master.cell(row=m_row, column=1).value = team
-        master.cell(row=m_row, column=2).value = score
-        m_row += 1
-
-    wb.save("Rankings.xlsx")
-
-def generate_average(stats):
-    """
-        stats: [[stat], [stat]]
-        return [avg for each category]
-    """
-    tarmac = []
-    auto_outter = []
-    auto_bottom = []
-    teleop_outter = []
-    teleop_bottom = []
-    level = []
-    driver_perf = []
-    auto_perf = []
-
-    for stat in range(len(stats)):
-        if stat == 0:
-            continue
-        tarmac.append(int(stats[stat][TARMAC]))
-        auto_outter.append(int(stats[stat][AUTO_OUTTER]))
-        auto_bottom.append(int(stats[stat][AUTO_BOTTOM]))
-        teleop_outter.append(int(stats[stat][TELEOP_OUTTER]))
-        teleop_bottom.append(int(stats[stat][TELEOP_BOTTOM]))
-        level.append(int(stats[stat][LEVEL]))
-        driver_perf.append(int(stats[stat][DRIVER_PERF]))
-        auto_perf.append(int(stats[stat][AUTO_PERF]))
-
-    return [
-        average(tarmac),
-        average(auto_outter),
-        average(auto_bottom),
-        average(teleop_outter),
-        average(teleop_bottom),
-        average(level),
-        average(driver_perf),
-        average(auto_perf)
-    ]
-
-def average(data):
-    return sum(data)/len(data)
-
-def sort_dict(dict1: dict):
-    sorted_values = sorted(dict1.values())[::-1] # Sort the values
-    sorted_dict = {}
-
-    for i in sorted_values:
-        for k in dict1.keys():
-            if dict1[k] == i:
-                sorted_dict[k] = dict1[k]
-                break
-
-    return sorted_dict
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
